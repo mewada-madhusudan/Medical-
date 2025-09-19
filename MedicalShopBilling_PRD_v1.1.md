@@ -90,16 +90,51 @@ The Invoice Reader ingests distributor purchase bills (images/PDFs) and converts
 ```  
 - **Validation:** enforce JSON schema on response. If invalid, retry or fallback to manual mapping.  
 
-### 5.4 Review & Correction UI
-(Same as earlier spec: editable grid, fuzzy matches, bulk corrections, validation.)  
+### 5.4  Review & Correction UI
+- **Sidebar:** invoice metadata (supplier, date, invoice no, totals) with edit option.
+- **Main grid:** parsed line items in rows:
+  - Columns: `#`, `Medicine (parsed)` (editable), `Matched Medicine (linkable)`, `Batch`, `Expiry`, `Quantity`, `Purchase Rate`, `MRP`, `Confidence`, `Action` (Map/Create/Ignore).
+- **Inline helpers:**
+  - Dropdown of suggested matches (top 3 fuzzy matches) with match scores.
+  - Button `Create New Medicine` that opens a lightweight modal to enter essential properties (generic, manufacturer, HSN, gst_rate).
+  - Quick edit shortcuts: double-click cell, Tab-to-next, bulk apply supplier or MRP.
+- **Validation:** expiry format, numeric checks for qty/price, negative values blocking.
+- **Bulk actions:** mark multiple rows to create new medicine entries, or adjust MRP multiplier, or discard rows.
 
-### 5.5 Security & Privacy
+### 5.5 Import Rules & Stock Update
+- After confirmation:
+  - Create a `PurchaseInvoice` record (invoice header).
+  - For each line, create `PurchaseLineItem` with references to `Medicine.id` (or null if new/created) and `Stock` entries (batch-level) with `quantity`, `expiry`, `purchase_rate`, `mrp`, and `supplier_id`.
+  - Update inventory & `Stock` aggregates.
+  - Generate an audit log entry per created/modified DB row with `user_id` and timestamp.
+
+### 5.6 Error Handling & Fallback
+- **OCR fails**: show user with an option to download OCR text, switch OCR engine, or manually enter invoice.
+- **Parsing fails or invalid JSON**: fall back to table-detection + regex extraction and show raw lines for mapping.
+- **Partial match/confidence low**: force manual confirmation for those lines.
+- **Malformed invoice (columns shifted)**: provide a guided column-mapping UI where user drags OCR-detected columns to target fields.
+
+### 5.7 Performance & Scaling
+- Typical invoice: 20–200 line items. Target parse time: <10s for a 2-page invoice on a modest modern machine (quad-core, 8GB RAM).
+- Use asynchronous job queue (e.g., `celery` or `rq`) for OCR and parsing to avoid UI blocking.
+- Cache fuzzy match indices (e.g., trigram indexes) for faster name matching; consider `pg_trgm` extension in Postgres.
+
+### 5.8 Testing & Validation
+- Create a test corpus of distributor bills (good-quality, low-quality, rotated, multi-column, merged cells) and measure:
+  - OCR character accuracy.
+  - Line-level extraction accuracy.
+  - Field-level precision/recall for medicine name, qty, price, batch, expiry.
+- Define acceptance criteria: >95% invoice-level correctness after user review in Phase 1; >99% after Phase 3.
+
+---
+
+### 5.9 Security & Privacy
 - Only **OCR + Parsing step** may use cloud APIs.  
 - App + DB remain **fully local**.  
 - Show user a **consent notice** before first-time cloud OCR/AI usage.  
 - API keys stored securely in `.env` or `config.yaml`.  
 
-### 5.6 Deployment Config
+### 5.10 Deployment Config
 - Config file defines provider:  
 ```yaml
 ocr_provider: "openai"   # or "tesseract"
@@ -123,8 +158,8 @@ api_key: "OPENAI_API_KEY"
 # 8. Phased Roadmap
 
 **Phase 0:** Local DB, billing, manual medicine entry, seed DB.  
-**Phase 1:** Tesseract OCR + manual mapping.  
-**Phase 2:** OpenAI API integration for OCR + parsing → JSON output.  
+**Phase 1:** OpenAI API integration for OCR + parsing → JSON output.  
+**Phase 2:** Tesseract OCR + manual mapping. 
 **Phase 3:** Automation improvements, caching, active learning, optional multi-store sync.  
 
 ---
